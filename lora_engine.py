@@ -444,8 +444,10 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5002))
     print(f"NEXUS LoRa Engine starting on port {port}...")
-    socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5002))
-    print(f"NEXUS LoRa Engine starting on port {port}...")
-    socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        debug=False,
+        allow_unsafe_werkzeug=True
+    )
