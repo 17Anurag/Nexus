@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS // LoRa Telemetry Reconstruction Engine</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg: #000; --surface: #080808; --surface2: #0f0f0f;
+  --border: #1a1a1a; --green: #00ff41; --green-dim: #008c24;
+  --amber: #ff8c00; --red: #ff2222; --blue: #00bfff;
+  --text: #ccffcc; --text-dim: #446644;
+  --font-m: 'Share Tech Mono', monospace; --font-d: 'Orbitron', monospace;
+}
+body { background:var(--bg); color:var(--text); font-family:var(--font-m); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+
+/* HEADER */
+header { background:var(--surface); border-bottom:1px solid var(--border); padding:8px 20px; display:flex; align-items:center; gap:16px; flex-shrink:0; }
+.logo { font-family:var(--font-d); font-size:20px; font-weight:900; color:var(--green); letter-spacing:6px; text-shadow:0 0 20px rgba(0,255,65,.4); }
+.logo small { color:var(--text-dim); font-size:8px; font-weight:400; display:block; letter-spacing:4px; margin-top:-2px; }
+.hstats { display:flex; gap:10px; margin-left:auto; align-items:center; }
+.hs { background:var(--surface2); border:1px solid var(--border); padding:3px 10px; font-size:10px; }
+.hs .v { font-weight:bold; }
+.hs.ok .v { color:var(--green); }
+.hs.warn .v { color:var(--amber); }
+.hs.bad .v { color:var(--red); }
+.hs.info .v { color:var(--blue); }
+
+/* MAIN LAYOUT */
+.main { display:flex; flex:1; overflow:hidden; }
+#map { flex:1.1; min-width:0; }
+.panel { width:440px; background:var(--surface); border-left:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; }
+
+/* PANEL SECTIONS */
+.ps { border-bottom:1px solid var(--border); padding:10px 12px; flex-shrink:0; }
+.pt { font-family:var(--font-d); font-size:8px; color:var(--text-dim); letter-spacing:3px; margin-bottom:8px; }
+
+/* KALMAN STATE DISPLAY */
+.kf-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+.kf-cell { background:var(--surface2); border:1px solid var(--border); padding:5px 8px; }
+.kf-label { font-size:8px; color:var(--text-dim); letter-spacing:1px; }
+.kf-val { font-size:12px; color:var(--green); }
+
+/* CONTROLS */
+.ctrl-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.ctrl-label { font-size:10px; color:var(--text-dim); width:100px; flex-shrink:0; }
+input[type=range] { flex:1; accent-color:var(--green); cursor:pointer; }
+.ctrl-val { font-size:10px; color:var(--amber); width:32px; text-align:right; }
+.btn { background:var(--green-dim); border:1px solid var(--green); color:var(--green); font-family:var(--font-m); font-size:11px; padding:5px 14px; cursor:pointer; letter-spacing:1px; transition:.15s; }
+.btn:hover { background:var(--green); color:#000; }
+.btn.pause { background:#1a0000; border-color:var(--red); color:var(--red); }
+.btn.pause:hover { background:var(--red); color:#000; }
+.btn-row { display:flex; gap:8px; }
+
+/* PACKET LOG */
+.log { flex:1; overflow-y:auto; padding:4px; font-size:10px; }
+.pk { padding:4px 6px; margin-bottom:2px; border-left:2px solid; line-height:1.4; }
+.pk.ok { border-color:var(--green); background:rgba(0,255,65,.03); }
+.pk.broken { border-color:var(--red); background:rgba(255,34,34,.05); }
+.pk.est { border-color:var(--amber); background:rgba(255,140,0,.05); }
+.pk-id { color:var(--text-dim); }
+.pk-status.ok { color:var(--green); }
+.pk-status.broken { color:var(--red); }
+.pk-status.est { color:var(--amber); }
+.pk-coords { color:var(--text); }
+.pk-kf { color:var(--amber); font-size:9px; }
+
+/* LEGEND */
+.legend { display:flex; gap:12px; padding:8px 12px; border-bottom:1px solid var(--border); flex-shrink:0; }
+.leg-item { display:flex; align-items:center; gap:5px; font-size:9px; color:var(--text-dim); }
+.leg-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+
+/* SCROLLBAR */
+::-webkit-scrollbar { width:3px; }
+::-webkit-scrollbar-track { background:var(--bg); }
+::-webkit-scrollbar-thumb { background:var(--border); }
+
+/* MAP popup override */
+.leaflet-popup-content-wrapper { background:#0a0a0a !important; border:1px solid #1a3a1a !important; border-radius:0 !important; font-family:var(--font-m) !important; box-shadow:0 0 20px rgba(0,255,65,.15) !important; }
+.leaflet-popup-tip { background:#0a0a0a !important; }
+.leaflet-popup-close-button { color:#446644 !important; }
+
+@keyframes ripple-v { 0%{transform:translate(-50%,-50%) scale(.3);opacity:.9} 100%{transform:translate(-50%,-50%) scale(3);opacity:0} }
+@keyframes ripple-e { 0%{transform:translate(-50%,-50%) scale(.3);opacity:.7} 100%{transform:translate(-50%,-50%) scale(3);opacity:0} }
+@keyframes pulse-e { 0%,100%{opacity:1} 50%{opacity:.3} }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">NEXUS <small>LoRa TELEMETRY RECONSTRUCTION ENGINE v1.4</small></div>
+  <div class="hstats">
+    <div class="hs ok">GATEWAY // <span class="v" id="h-gw">ONLINE</span></div>
+    <div class="hs ok">RECEIVED // <span class="v" id="h-rx">0</span></div>
+    <div class="hs bad">CORRUPT // <span class="v" id="h-bad">0</span></div>
+    <div class="hs warn">ESTIMATED // <span class="v" id="h-est">0</span></div>
+    <div class="hs info">INTEGRITY // <span class="v" id="h-int">—</span></div>
+  </div>
+</header>
+
+<div class="main">
+  <div id="map"></div>
+
+  <div class="panel">
+    <div class="ps">
+      <div class="pt">Kalman Filter State</div>
+      <div class="kf-grid">
+        <div class="kf-cell"><div class="kf-label">LAT ESTIMATE</div><div class="kf-val" id="kf-lat">—</div></div>
+        <div class="kf-cell"><div class="kf-label">LON ESTIMATE</div><div class="kf-val" id="kf-lon">—</div></div>
+        <div class="kf-cell"><div class="kf-label">VEL-LAT (°/s)</div><div class="kf-val" id="kf-vlat">—</div></div>
+        <div class="kf-cell"><div class="kf-label">VEL-LON (°/s)</div><div class="kf-val" id="kf-vlon">—</div></div>
+        <div class="kf-cell"><div class="kf-label">UNCERTAINTY</div><div class="kf-val" id="kf-unc">—</div></div>
+        <div class="kf-cell"><div class="kf-label">LAST VERIFIED</div><div class="kf-val" id="kf-last">—</div></div>
+      </div>
+    </div>
+
+    <div class="ps">
+      <div class="pt">Simulation Controls</div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">PACKET LOSS %</span>
+        <input type="range" id="loss-slider" min="5" max="70" value="30" oninput="lossRate=+this.value;document.getElementById('loss-val').textContent=this.value+'%'">
+        <span class="ctrl-val" id="loss-val">30%</span>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">TX INTERVAL</span>
+        <input type="range" id="interval-slider" min="500" max="3000" value="1200" step="100" oninput="txInterval=+this.value;document.getElementById('int-val').textContent=(this.value/1000).toFixed(1)+'s'">
+        <span class="ctrl-val" id="int-val">1.2s</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="sim-btn" onclick="toggleSim()">▶ START</button>
+        <button class="btn" onclick="resetSim()">↺ RESET</button>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div class="leg-item"><div class="leg-dot" style="background:#00ff41;box-shadow:0 0 6px #00ff41"></div>VERIFIED POSITION</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#ff8c00;box-shadow:0 0 6px #ff8c00;animation:pulse-e 1.5s infinite"></div>KF ESTIMATE</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#444;border:1px solid #666"></div>TRAIL HISTORY</div>
+    </div>
+
+    <div class="ps" style="padding:4px 8px;flex-shrink:0">
+      <div class="pt" style="margin-bottom:0">Live Packet Log</div>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ══════════════════════════════════════════════════════
+// MATRIX MATH HELPERS
+// ══════════════════════════════════════════════════════
+const mm = {
+  add:(A,B) => A.map((r,i) => r.map((v,j) => v + B[i][j])),
+  sub:(A,B) => A.map((r,i) => r.map((v,j) => v - B[i][j])),
+  mul:(A,B) => A.map(r => B[0].map((_,j) => r.reduce((s,_,k) => s + r[k]*B[k][j], 0))),
+  transpose: A => A[0].map((_,i) => A.map(r => r[i])),
+  scalar:(A,s) => A.map(r => r.map(v => v*s)),
+  identity: n => Array.from({length:n},(_,i)=>Array.from({length:n},(_,j)=>i===j?1:0)),
+  inv2x2: M => { const d = M[0][0]*M[1][1]-M[0][1]*M[1][0]; return [[M[1][1]/d,-M[0][1]/d],[-M[1][0]/d,M[0][0]/d]]; }
+};
+
+// ══════════════════════════════════════════════════════
+// KALMAN FILTER (4D: lat,lon,vlat,vlon)
+// ══════════════════════════════════════════════════════
+class KalmanFilter {
+  constructor(lat0, lon0) {
+    this.x = [[lat0],[lon0],[0],[0]]; // state
+    this.P = mm.scalar(mm.identity(4), 1e-4); // covariance
+    this.Q = [[1e-8,0,0,0],[0,1e-8,0,0],[0,0,1e-10,0],[0,0,0,1e-10]]; // process noise
+    this.R = [[1e-6,0],[0,1e-6]]; // measurement noise
+    this.H = [[1,0,0,0],[0,1,0,0]]; // measurement matrix
+  }
+
+  F(dt) { // transition matrix
+    return [[1,0,dt,0],[0,1,0,dt],[0,0,1,0],[0,0,0,1]];
+  }
+
+  predict(dt) {
+    const F = this.F(dt);
+    this.x = mm.mul(F, this.x);
+    this.P = mm.add(mm.mul(mm.mul(F, this.P), mm.transpose(F)), this.Q);
+    return this;
+  }
+
+  update(lat, lon) {
+    const z = [[lat],[lon]];
+    const H = this.H;
+    const Hx = mm.mul(H, this.x);
+    const y = mm.sub(z, Hx); // innovation
+    const S = mm.add(mm.mul(mm.mul(H, this.P), mm.transpose(H)), this.R); // innovation cov
+    const K = mm.mul(mm.mul(this.P, mm.transpose(H)), mm.inv2x2(S)); // Kalman gain
+    this.x = mm.add(this.x, mm.mul(K, y));
+    const I = mm.identity(4);
+    this.P = mm.mul(mm.sub(I, mm.mul(K, H)), this.P);
+    return this;
+  }
+
+  get lat() { return this.x[0][0]; }
+  get lon() { return this.x[1][0]; }
+  get vlat() { return this.x[2][0]; }
+  get vlon() { return this.x[3][0]; }
+  get uncertainty() { return Math.sqrt(this.P[0][0]*this.P[0][0] + this.P[1][1]*this.P[1][1]); }
+}
+
+// ══════════════════════════════════════════════════════
+// ASSET PATH (circular route around Delhi region)
+// ══════════════════════════════════════════════════════
+const PATH = [
+  [28.85,77.40],[28.90,77.52],[28.98,77.63],[29.05,77.58],
+  [29.10,77.45],[29.05,77.32],[28.95,77.28],[28.87,77.33],
+  [28.82,77.42],[28.85,77.40]
+];
+const NOISE = 0.0015; // GPS measurement noise in degrees
+
+let pathT = 0; // 0..1 along the full path
+let lossRate = 30;
+let txInterval = 1200;
+let simRunning = false;
+let simTimer = null;
+let pktSeq = 0;
+let rxCount = 0, badCount = 0, estCount = 0;
+let kf = null;
+let lastVerifiedTime = null;
+
+// Marker references
+let verifiedMarker = null, estimatedMarker = null;
+const trailPoints = [];
+const trailPolyline = { v: null, e: null };
+const allPolyline = [];
+
+// ══════════════════════════════════════════════════════
+// MAP INIT
+// ══════════════════════════════════════════════════════
+const map = L.map('map', { center:[28.95,77.45], zoom:10, zoomControl:false });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution:'© OpenStreetMap © CARTO', subdomains:'abcd', maxZoom:19
+}).addTo(map);
+L.control.zoom({ position:'bottomright' }).addTo(map);
+
+// Draw the planned route faintly
+const routeLine = L.polyline(PATH, { color:'#00ff41', weight:1, opacity:.15, dashArray:'4 8' }).addTo(map);
+
+// ══════════════════════════════════════════════════════
+// ICONS
+// ══════════════════════════════════════════════════════
+function mkVerifiedIcon() {
+  return L.divIcon({
+    className:'', iconSize:[28,28], iconAnchor:[14,14],
+    html:`<div style="position:relative;width:28px;height:28px;">
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+        width:12px;height:12px;border-radius:50%;background:#00ff41;box-shadow:0 0 10px #00ff41,0 0 20px rgba(0,255,65,.5);"></div>
+      <div style="position:absolute;top:50%;left:50%;
+        width:28px;height:28px;border-radius:50%;border:1px solid #00ff41;opacity:.6;
+        animation:ripple-v 1.8s ease-out infinite;"></div>
+    </div>`
+  });
+}
+
+function mkEstimatedIcon(unc) {
+  const opacity = Math.max(0.4, 1 - unc * 1000);
+  return L.divIcon({
+    className:'', iconSize:[32,32], iconAnchor:[16,16],
+    html:`<div style="position:relative;width:32px;height:32px;">
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+        width:11px;height:11px;border-radius:50%;background:#ff8c00;opacity:${opacity};
+        box-shadow:0 0 10px #ff8c00;animation:pulse-e 1.2s infinite;"></div>
+      <div style="position:absolute;top:50%;left:50%;
+        width:32px;height:32px;border-radius:50%;border:1px dashed #ff8c00;opacity:.4;
+        animation:ripple-e 2s ease-out infinite;"></div>
+    </div>`
+  });
+}
+
+// ══════════════════════════════════════════════════════
+// INTERPOLATE ALONG PATH
+// ══════════════════════════════════════════════════════
+function interpolatePath(t) {
+  const segs = PATH.length - 1;
+  const segLen = 1 / segs;
+  const seg = Math.min(Math.floor(t / segLen), segs - 1);
+  const local = (t - seg * segLen) / segLen;
+  const A = PATH[seg], B = PATH[seg + 1];
+  return [
+    A[0] + (B[0]-A[0]) * local,
+    A[1] + (B[1]-A[1]) * local
+  ];
+}
+
+function addNoise([lat,lon]) {
+  return [lat + (Math.random()-.5)*NOISE*2, lon + (Math.random()-.5)*NOISE*2];
+}
+
+function corruptPacket(raw) {
+  const type = Math.floor(Math.random()*3);
+  if (type === 0) return { ...raw, lat: undefined, lon: undefined, _broken:'MISSING LAT/LON' };
+  if (type === 1) return { ...raw, lat: 'NaN', _broken:'MALFORMED LAT' };
+  return { ...raw, _broken:'CHECKSUM FAIL', _partial:true };
+}
+
+// ══════════════════════════════════════════════════════
+// SIMULATION STEP
+// ══════════════════════════════════════════════════════
+const DT = 1.2; // seconds per step (nominal)
+
+function simStep() {
+  // Advance path
+  pathT = (pathT + 0.004) % 1;
+  const [trueLat, trueLon] = interpolatePath(pathT);
+  const [measLat, measLon] = addNoise([trueLat, trueLon]);
+
+  pktSeq++;
+  rxCount++;
+
+  const raw = {
+    seq: pktSeq, ts: new Date().toISOString(),
+    lat: measLat.toFixed(6), lon: measLon.toFixed(6),
+    hdg: (Math.atan2(kf.vlon, kf.vlat) * 180/Math.PI + 360) % 360,
+    spd: Math.sqrt(kf.vlat**2 + kf.vlon**2) * 111320
+  };
+
+  const isBroken = Math.random() * 100 < lossRate;
+  const pkt = isBroken ? corruptPacket(raw) : raw;
+
+  if (isBroken) {
+    badCount++;
+    // PREDICT ONLY (no measurement update)
+    kf.predict(DT);
+    estCount++;
+    updateEstimatedDot();
+    logPacket(pkt, 'broken');
+    logPacket({ _est:true, lat:kf.lat.toFixed(6), lon:kf.lon.toFixed(6) }, 'est');
+  } else {
+    // PREDICT + UPDATE
+    kf.predict(DT);
+    kf.update(parseFloat(pkt.lat), parseFloat(pkt.lon));
+    lastVerifiedTime = new Date();
+    updateVerifiedDot(parseFloat(pkt.lat), parseFloat(pkt.lon));
+    logPacket(pkt, 'ok');
+  }
+
+  updateKFDisplay();
+  updateHeaderStats();
+  trailPoints.push([kf.lat, kf.lon]);
+  if (trailPoints.length > 120) trailPoints.shift();
+  if (trailPolyline.v) map.removeLayer(trailPolyline.v);
+  trailPolyline.v = L.polyline(trailPoints, { color:'#334433', weight:1.5, opacity:.6 }).addTo(map);
+}
+
+// ══════════════════════════════════════════════════════
+// DOT UPDATES
+// ══════════════════════════════════════════════════════
+function updateVerifiedDot(lat, lon) {
+  if (verifiedMarker) map.removeLayer(verifiedMarker);
+  if (estimatedMarker) { map.removeLayer(estimatedMarker); estimatedMarker = null; }
+  verifiedMarker = L.marker([lat,lon], { icon:mkVerifiedIcon() })
+    .bindPopup(`<div style="font-family:var(--font-m);color:#a0e8a0;font-size:10px;padding:4px">
+      <b style="color:#00ff41">VERIFIED POSITION</b><br>
+      Lat: ${lat.toFixed(6)}°N<br>Lon: ${lon.toFixed(6)}°E<br>
+      <span style="color:#446644">Seq: #${pktSeq} | Source: LoRa RX</span>
+    </div>`, { offset:[0,-8] })
+    .addTo(map);
+}
+
+function updateEstimatedDot() {
+  const unc = kf.uncertainty;
+  if (estimatedMarker) map.removeLayer(estimatedMarker);
+  estimatedMarker = L.marker([kf.lat,kf.lon], { icon:mkEstimatedIcon(unc) })
+    .bindPopup(`<div style="font-family:var(--font-m);color:#a0e8a0;font-size:10px;padding:4px">
+      <b style="color:#ff8c00">KF ESTIMATED POSITION</b><br>
+      Lat: ${kf.lat.toFixed(6)}°N<br>Lon: ${kf.lon.toFixed(6)}°E<br>
+      Uncertainty: ±${(unc*111320).toFixed(0)}m<br>
+      <span style="color:#446644">Packet was corrupted — position inferred via Kalman Filter</span>
+    </div>`, { offset:[0,-8] })
+    .addTo(map);
+}
+
+// ══════════════════════════════════════════════════════
+// UI UPDATES
+// ══════════════════════════════════════════════════════
+function updateKFDisplay() {
+  document.getElementById('kf-lat').textContent = kf.lat.toFixed(6) + '°';
+  document.getElementById('kf-lon').textContent = kf.lon.toFixed(6) + '°';
+  document.getElementById('kf-vlat').textContent = (kf.vlat * 1e6).toFixed(3);
+  document.getElementById('kf-vlon').textContent = (kf.vlon * 1e6).toFixed(3);
+  document.getElementById('kf-unc').textContent = '±' + (kf.uncertainty * 111320).toFixed(1) + 'm';
+  document.getElementById('kf-last').textContent = lastVerifiedTime
+    ? lastVerifiedTime.toISOString().slice(11,19) + 'Z' : '—';
+}
+
+function updateHeaderStats() {
+  document.getElementById('h-rx').textContent = rxCount;
+  document.getElementById('h-bad').textContent = badCount;
+  document.getElementById('h-est').textContent = estCount;
+  const integrity = rxCount > 0 ? ((rxCount - badCount) / rxCount * 100).toFixed(0) + '%' : '—';
+  document.getElementById('h-int').textContent = integrity;
+}
+
+function logPacket(pkt, status) {
+  const log = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = `pk ${status}`;
+
+  if (status === 'broken') {
+    div.innerHTML = `<span class="pk-id">SEQ #${pkt.seq} | ${pkt.ts ? pkt.ts.slice(11,19)+'Z' : ''}</span><br>
+      <span class="pk-status broken">✗ CORRUPTED — ${pkt._broken}</span><br>
+      <span class="pk-kf">→ Triggering Kalman prediction-only mode...</span>`;
+  } else if (status === 'est') {
+    div.innerHTML = `<span class="pk-status est">◈ KF ESTIMATE</span> &nbsp;
+      <span class="pk-coords">Lat:${pkt.lat} Lon:${pkt.lon}</span>`;
+  } else {
+    div.innerHTML = `<span class="pk-id">SEQ #${pkt.seq} | ${pkt.ts.slice(11,19)}Z</span><br>
+      <span class="pk-status ok">✓ VERIFIED</span> &nbsp;
+      <span class="pk-coords">Lat:${pkt.lat} Lon:${pkt.lon}</span><br>
+      <span class="pk-kf">Hdg:${typeof pkt.hdg==='number'?pkt.hdg.toFixed(1):0}° Spd:${typeof pkt.spd==='number'?pkt.spd.toFixed(1):0}m/s</span>`;
+  }
+
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  if (log.children.length > 200) log.removeChild(log.firstChild);
+}
+
+// ══════════════════════════════════════════════════════
+// SIM CONTROLS
+// ══════════════════════════════════════════════════════
+function toggleSim() {
+  simRunning = !simRunning;
+  const btn = document.getElementById('sim-btn');
+  if (simRunning) {
+    btn.textContent = '⏸ PAUSE'; btn.className = 'btn pause';
+    document.getElementById('h-gw').textContent = 'ONLINE';
+    runLoop();
+  } else {
+    btn.textContent = '▶ RESUME'; btn.className = 'btn';
+    document.getElementById('h-gw').textContent = 'PAUSED';
+    clearTimeout(simTimer);
+  }
+}
+
+function runLoop() {
+  if (!simRunning) return;
+  simStep();
+  simTimer = setTimeout(runLoop, txInterval + (Math.random()-.5)*txInterval*.3);
+}
+
+function resetSim() {
+  simRunning = false;
+  clearTimeout(simTimer);
+  document.getElementById('sim-btn').textContent = '▶ START';
+  document.getElementById('sim-btn').className = 'btn';
+  document.getElementById('h-gw').textContent = 'STANDBY';
+  pathT = 0; pktSeq = 0; rxCount = 0; badCount = 0; estCount = 0;
+  lastVerifiedTime = null;
+  if (verifiedMarker) { map.removeLayer(verifiedMarker); verifiedMarker = null; }
+  if (estimatedMarker) { map.removeLayer(estimatedMarker); estimatedMarker = null; }
+  if (trailPolyline.v) { map.removeLayer(trailPolyline.v); trailPolyline.v = null; }
+  trailPoints.length = 0;
+  document.getElementById('log').innerHTML = '';
+  updateHeaderStats();
+  document.getElementById('h-int').textContent = '—';
+
+  const start = PATH[0];
+  kf = new KalmanFilter(start[0], start[1]);
+  updateKFDisplay();
+  updateVerifiedDot(start[0], start[1]);
+  document.getElementById('kf-unc').textContent = '±0.0m';
+}
+
+// ══════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════
+const start = PATH[0];
+kf = new KalmanFilter(start[0], start[1]);
+updateVerifiedDot(start[0], start[1]);
+updateKFDisplay();
+document.getElementById('h-gw').textContent = 'STANDBY';
+document.getElementById('h-rx').textContent = '0';
+document.getElementById('h-bad').textContent = '0';
+document.getElementById('h-est').textContent = '0';
+</script>
+</body>
+</html>
